@@ -1,11 +1,15 @@
 import * as C from './core.js';
 import * as R from './receipts.js';
-import { zip } from './zip.js';
+import { zipParts } from './zip.js';
 
 // ---------- storage ----------
 const KEY = 'dompetku.v1';
 const fresh = () => ({ users: [], txs: [], session: null });
-let db = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || fresh(); } catch { return fresh(); } })();
+let loadedFromStorage = false; // false = storage was empty or unreadable: never prune photos against it
+let db = (() => {
+  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) { loadedFromStorage = true; return d; } } catch {}
+  return fresh();
+})();
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
   catch { toast('Gagal menyimpan: penyimpanan perangkat penuh'); return false; }
@@ -166,14 +170,14 @@ const views = {
           `<button class="chip" aria-pressed="${bukti === v}" data-go="${qs('riwayat', { ...keep, bukti: bukti === v ? '' : v })}">${label}</button>`).join('')}
       </div>
       ${groups.length ? groups.map(([date, list]) => `<div class="group-date">${C.longDate(date)}</div><ul class="card tx-list">${list.map(txRow).join('')}</ul>`).join('')
-        : `<div class="card empty" style="margin-top:16px">Tidak ada transaksi${cat ? ` kategori ${cat}` : ''}${bukti ? (bukti === 'ada' ? ' dengan bukti' : ' tanpa bukti') : ''} di ${C.monthLabel(ym)}.<button class="btn" data-go="tambah">Tambah transaksi</button></div>`}
+        : `<div class="card empty" style="margin-top:16px">Tidak ada transaksi${cat ? ` kategori ${esc(cat)}` : ''}${bukti ? (bukti === 'ada' ? ' dengan bukti' : ' tanpa bukti') : ''} di ${C.monthLabel(ym)}.<button class="btn" data-go="tambah">Tambah transaksi</button></div>`}
     </section>${tabbar('riwayat')}`;
   },
 
   tambah: () => txForm(null),
   ubah: (q, id) => {
     const t = myTx().find(x => x.id === id);
-    return t ? txForm(t) : (setTimeout(() => go('beranda')), '');
+    return t ? txForm(t) : (setTimeout(() => redirect(lastMain)), ''); // e.g. Back onto a deleted transaction
   },
 
   profil: () => {
@@ -256,8 +260,10 @@ const views = {
 };
 
 // Photo being edited in the open transaction form. Nothing touches IndexedDB until Simpan.
-// { url, blob?, width?, height? }: blob set = new photo; no blob = the saved one; null = no photo
-let photo = null, photoChanged = false, photoToken = 0;
+// { url, blob?, width?, height? }: blob set = new photo; no blob = the saved one; null = no photo.
+// photoToken changes whenever a form opens, pickSeq whenever a photo is picked; async results carrying an old
+// value are dropped. photoBusy = a picked photo is still compressing (Simpan waits for it).
+let photo = null, photoChanged = false, photoToken = 0, pickSeq = 0, photoBusy = false;
 function setPhoto(p) {
   if (photo?.url && photo.url !== p?.url) URL.revokeObjectURL(photo.url);
   photo = p;
@@ -265,23 +271,24 @@ function setPhoto(p) {
   if (box) box.innerHTML = receiptBlock();
 }
 const fileInput = capture => `<input type="file" accept="image/*" ${capture ? 'capture="environment"' : ''} data-photo hidden>`;
+const pickButtons = (cameraLabel) => `<div class="photo-actions"><label class="btn outline small">${I('camera')}${cameraLabel}${fileInput(true)}</label>
+    <label class="btn outline small">${I('image')}Dari galeri${fileInput(false)}</label></div>`;
 function receiptBlock() {
   if (photo?.loading) return '<p class="muted">Memuat foto…</p>';
   if (photo?.url) return `<button type="button" class="thumb" data-act="viewphoto" aria-label="Lihat foto struk"><img src="${photo.url}" alt="Foto struk"></button>
-    <div class="photo-actions"><label class="btn outline small">Ganti foto${fileInput(true)}</label>
-    <button type="button" class="btn danger small" data-act="removephoto">Hapus foto</button></div>`;
-  return `<div class="photo-actions"><label class="btn outline small">${I('camera')}Foto struk${fileInput(true)}</label>
-    <label class="btn outline small">${I('image')}Dari galeri${fileInput(false)}</label></div>`;
+    ${pickButtons('Foto ulang')}<button type="button" class="link-btn out" data-act="removephoto">Hapus foto</button>`;
+  return pickButtons('Foto struk');
 }
 
 function txForm(t) {
   const type = t?.type || 'expense';
   photoChanged = false;
+  photoBusy = false;
   setPhoto(t?.receiptId ? { loading: true } : null);
   const token = ++photoToken; // a slow read must not land in a form opened later
   if (t?.receiptId) R.getReceipt(t.receiptId)
-    .then(rec => token === photoToken && setPhoto(rec ? { url: URL.createObjectURL(rec.blob) } : null))
-    .catch(() => token === photoToken && setPhoto(null));
+    .then(rec => token === photoToken && !photoChanged && setPhoto(rec ? { url: URL.createObjectURL(rec.blob) } : null))
+    .catch(() => token === photoToken && !photoChanged && setPhoto(null));
   return `<section class="screen form">${topbar(t ? 'Ubah transaksi' : 'Tambah transaksi', lastMain)}
     <form data-form="tx" novalidate>
       <input type="hidden" name="id" value="${t?.id || ''}"><input type="hidden" name="type" value="${type}">
@@ -311,19 +318,43 @@ function download(blob, name) {
 // ---------- full-screen photo viewer with pinch zoom ----------
 // Own pinch handling (touch-action: none) so the browser never zooms the page itself:
 // a zoomed page is exactly what made the tab bar disappear before.
+// Built here rather than in index.html, so app.js never depends on a matching index.html version.
+document.body.insertAdjacentHTML('beforeend', `<div id="viewer" hidden role="dialog" aria-label="Foto struk">
+  <img alt="Foto struk"><button class="close" aria-label="Tutup">${I('x')}</button></div>`);
 const viewer = document.getElementById('viewer'), viewerImg = viewer.querySelector('img');
 let zoom = { s: 1, x: 0, y: 0 }, pointers = new Map(), gesture = null;
-const applyZoom = () => { viewerImg.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`; };
+// pan is clamped so the zoomed photo always covers the screen edge it was dragged from (never an empty black screen)
+const applyZoom = () => {
+  const mx = Math.max(0, (viewerImg.offsetWidth * zoom.s - innerWidth) / 2);
+  const my = Math.max(0, (viewerImg.offsetHeight * zoom.s - innerHeight) / 2);
+  zoom.x = Math.max(-mx, Math.min(mx, zoom.x));
+  zoom.y = Math.max(-my, Math.min(my, zoom.y));
+  viewerImg.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+};
+const closeBtn = viewer.querySelector('.close');
+let viewerOpener = null;
 function openViewer(url) {
+  if (!viewer.hidden) return;
+  viewerOpener = document.activeElement;
   viewerImg.src = url;
   zoom = { s: 1, x: 0, y: 0 }; applyZoom();
   viewer.hidden = false;
+  closeBtn.focus();
   history.pushState({ viewer: true }, ''); // the phone's back button closes the viewer, not the form
 }
-const closeViewer = () => { if (!viewer.hidden) history.back(); };
-window.addEventListener('popstate', () => { viewer.hidden = true; });
-viewer.querySelector('.close').addEventListener('click', closeViewer);
+function hideViewer() {
+  if (viewer.hidden) return false;
+  viewer.hidden = true;
+  viewerOpener?.focus?.();
+  return true;
+}
+// hide first, then drop our history entry: a second tap finds it already hidden and does not go back twice
+const closeViewer = () => { if (hideViewer()) history.back(); };
+window.addEventListener('popstate', hideViewer);
+closeBtn.addEventListener('click', closeViewer);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !viewer.hidden) closeViewer(); });
 viewer.addEventListener('pointerdown', e => {
+  if (e.target.closest('.close')) return; // capturing this pointer would send the button's click to #viewer instead
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   viewer.setPointerCapture(e.pointerId);
   const p = [...pointers.values()];
@@ -340,10 +371,24 @@ viewer.addEventListener('pointermove', e => {
   if (zoom.s === 1) zoom.x = zoom.y = 0;
   applyZoom();
 });
-const endPointer = e => { pointers.delete(e.pointerId); gesture = null; };
+// double tap toggles 2.5x; detected by hand because iOS Safari does not reliably fire dblclick on touch
+let tap = null, lastTap = 0;
+viewer.addEventListener('pointerdown', e => { if (pointers.size === 1) tap = { x: e.clientX, y: e.clientY, t: e.timeStamp }; });
+const endPointer = e => {
+  pointers.delete(e.pointerId);
+  gesture = null;
+  if (e.type !== 'pointerup' || pointers.size || !tap) return;
+  const still = Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 10 && e.timeStamp - tap.t < 250;
+  tap = null;
+  if (!still) return;
+  if (e.timeStamp - lastTap < 300) {
+    zoom = zoom.s > 1 ? { s: 1, x: 0, y: 0 } : { s: 2.5, x: 0, y: 0 };
+    applyZoom();
+    lastTap = 0;
+  } else lastTap = e.timeStamp;
+};
 viewer.addEventListener('pointerup', endPointer);
 viewer.addEventListener('pointercancel', endPointer);
-viewer.addEventListener('dblclick', () => { zoom = zoom.s > 1 ? { s: 1, x: 0, y: 0 } : { s: 2.5, x: 0, y: 0 }; applyZoom(); });
 
 // ---------- forms ----------
 const values = form => Object.fromEntries(new FormData(form));
@@ -380,8 +425,9 @@ const forms = {
     const v = values(form);
     const tx = { type: v.type, amount: C.parseAmount(v.amount), category: v.category, date: v.date, note: v.note.trim() };
     if (!showErrors(form, C.validateTx(tx))) return;
-    const submit = form.querySelector('button:not([type])');
-    submit.disabled = true;
+    if (photoBusy) return toast('Tunggu, foto masih diproses');
+    if (form.inert || form.dataset.saved) return; // a second Simpan in the same tap batch
+    form.inert = true; // no second Simpan or Hapus while the photo is being written
     const old = db.txs.find(t => t.id === v.id && t.userId === db.session);
     const rec = old || { id: randomId(), userId: db.session, createdAt: Date.now() };
     Object.assign(rec, tx);
@@ -404,8 +450,9 @@ const forms = {
       }
     }
     if (!old) db.txs.push(rec);
-    submit.disabled = false;
+    form.inert = false;
     if (!save()) return;
+    form.dataset.saved = '1'; // the form stays in the DOM until the hashchange re-render
     if (prevReceipt && prevReceipt !== rec.receiptId) R.deleteReceipt(prevReceipt).catch(() => {});
     photoChanged = false;
     toast(msg);
@@ -490,7 +537,7 @@ const actions = {
         const rec = await R.getReceipt(t.receiptId);
         if (rec) files.push({ name: C.receiptFileName(t), data: new Uint8Array(await rec.blob.arrayBuffer()) });
       }
-      download(new Blob([zip(files)], { type: 'application/zip' }), `dompetku-${C.isoDate(new Date())}.zip`);
+      download(new Blob(zipParts(files), { type: 'application/zip' }), `dompetku-${C.isoDate(new Date())}.zip`);
       toast(`${txs.length} transaksi dan ${files.length - 1} foto diekspor`);
     } catch {
       toast('Ekspor ZIP gagal');
@@ -528,15 +575,18 @@ const PUBLIC = new Set(['masuk', 'daftar', 'lupa', 'sk']);
 const MAIN = new Set(['beranda', 'riwayat']);
 let lastMain = 'beranda', lastPath = '';
 const go = path => { location.hash = '#/' + path; };
+// redirects replace the current entry, so Back never lands on a page that bounces forward again
+const redirect = path => { location.replace('#/' + path); };
 
 function render() {
   const [raw, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   let [path, id] = raw.startsWith('ubah/') ? ['ubah', raw.slice(5)] : [raw, null];
   const user = me();
-  if (!views[path]) return go(user ? 'beranda' : 'masuk');
-  if (!PUBLIC.has(path) && !user) return go('masuk');
-  if (user && (path === 'masuk' || path === 'daftar')) return go('beranda');
+  if (!views[path]) return redirect(user ? 'beranda' : 'masuk');
+  if (!PUBLIC.has(path) && !user) return redirect('masuk');
+  if (user && (path === 'masuk' || path === 'daftar')) return redirect('beranda');
   if (MAIN.has(path)) lastMain = raw + (query ? '?' + query : '');
+  if (path !== 'tambah' && path !== 'ubah' && photo) { photoToken++; setPhoto(null); } // leaving the form frees its photo
   document.documentElement.dataset.theme = user?.theme || 'system';
   document.getElementById('app').innerHTML = views[path](new URLSearchParams(query), id);
   if (raw !== lastPath) window.scrollTo(0, 0);
@@ -574,14 +624,20 @@ app.addEventListener('change', async e => {
   if (e.target.matches('[data-photo]')) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setPhoto({ loading: true });
+    // keep showing the current photo until the new one is ready: a failed pick must not lose it
+    const form = photoToken, pick = ++pickSeq, current = () => form === photoToken && pick === pickSeq;
+    const box = document.getElementById('receipt');
+    photoBusy = true;
+    box?.classList.add('busy');
     try {
       const c = await R.compress(file);
+      if (!current()) return; // the form closed or another photo was picked meanwhile
       photoChanged = true;
       setPhoto({ url: URL.createObjectURL(c.blob), ...c });
     } catch {
-      setPhoto(null);
-      toast('Foto tidak bisa dibaca. Coba foto lain.');
+      if (current()) toast('Foto tidak bisa dibaca. Coba foto lain.');
+    } finally {
+      if (current()) { photoBusy = false; box?.classList.remove('busy'); }
     }
     return;
   }
@@ -592,6 +648,15 @@ app.addEventListener('change', async e => {
 });
 window.addEventListener('hashchange', render);
 render();
-R.pruneOrphans(new Set(db.txs.map(t => t.receiptId).filter(Boolean))).catch(() => {});
+// Reconcile photos and transactions both ways at start: drop photos no transaction uses, and clear ids whose
+// photo is gone (browser evicted it, or it was removed elsewhere) so rows do not claim a proof that is not there.
+// Only what existed at start is touched: a photo saved while this runs is neither cleared nor pruned.
+if (loadedFromStorage) (async () => {
+  const startedAt = Date.now(), atStart = new Map(db.txs.map(t => [t, t.receiptId]));
+  const ids = new Set(await R.allReceiptIds());
+  const dangling = db.txs.filter(t => t.receiptId && t.receiptId === atStart.get(t) && !ids.has(t.receiptId));
+  if (dangling.length) { dangling.forEach(t => { t.receiptId = ''; }); if (save()) render(); }
+  await R.pruneOrphans(new Set(db.txs.map(t => t.receiptId).filter(Boolean)), startedAt);
+})().catch(() => {});
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

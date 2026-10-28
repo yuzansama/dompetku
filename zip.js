@@ -1,5 +1,6 @@
 // Minimal ZIP writer (stored, no compression): JPEGs are already compressed, so deflate would gain nothing.
-// zip([{ name, data: Uint8Array }]) -> Uint8Array. Tested in test.mjs.
+// zipParts([{ name, data: Uint8Array }]) -> array of byte chunks; new Blob(parts) is the archive, with no extra
+// full-size copy (matters on phones with hundreds of photos). zip() joins them for tests. Tested in test.mjs.
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
@@ -13,7 +14,15 @@ export const crc32 = bytes => {
 };
 
 // ponytail: no ZIP64, so the archive caps at 4 GB / 65535 files; far above what a phone holds here.
-export function zip(files, now = new Date()) {
+export function zip(files, now) {
+  const all = zipParts(files, now);
+  const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0));
+  let p = 0;
+  for (const part of all) { out.set(part, p); p += part.length; }
+  return out;
+}
+
+export function zipParts(files, now = new Date()) {
   const enc = new TextEncoder();
   const time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
   const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
@@ -45,9 +54,5 @@ export function zip(files, now = new Date()) {
   end.setUint32(0, 0x06054b50, true);
   end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
   end.setUint32(12, cenSize, true); end.setUint32(16, offset, true);
-  const all = [...parts, ...central, new Uint8Array(end.buffer)];
-  const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0));
-  let p = 0;
-  for (const part of all) { out.set(part, p); p += part.length; }
-  return out;
+  return [...parts, ...central, new Uint8Array(end.buffer)];
 }

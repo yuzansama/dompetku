@@ -63,12 +63,17 @@ assert.equal(c.receiptFileName(withProof), 'bukti/2026-10-28_makan_45000_a1b2c3.
 assert.ok(c.toCSV([withProof]).endsWith(',bukti/2026-10-28_makan_45000_a1b2c3.jpg'));
 assert.deepEqual(c.filterTx([withProof, { ...tx, createdAt: 2 }], { proof: 'ada' }).length, 1);
 assert.deepEqual(c.filterTx([withProof, { ...tx, createdAt: 2 }], { proof: 'tanpa' })[0].createdAt, 2);
+assert.equal(c.formatBytes(0), '0 KB');
 assert.equal(c.formatBytes(300), '1 KB');
+assert.ok(c.toCSV([{ ...tx, note: '=HYPERLINK("http://x")' }]).includes(`"'=HYPERLINK(""http://x"")"`));
+assert.ok(c.toCSV([{ ...tx, note: '+62 811' }]).includes(",'+62 811,"));
 assert.equal(c.formatBytes(250 * 1024), '250 KB');
 assert.equal(c.formatBytes(4.3 * 1024 * 1024), '4,3 MB');
-assert.deepEqual(c.fitSize(4000, 3000, 1600), [1600, 1200]);
-assert.deepEqual(c.fitSize(800, 600, 1600), [800, 600]);
-assert.deepEqual(c.fitSize(1000, 3000, 1600), [533, 1600]);
+assert.deepEqual(c.fitSize(4000, 3000), [1600, 1200]);
+assert.deepEqual(c.fitSize(3000, 4000), [1200, 1600]);
+assert.deepEqual(c.fitSize(800, 600), [800, 600]);
+assert.deepEqual(c.fitSize(1080, 8000), [509, 3771]);
+assert.deepEqual(c.fitSize(500, 9000), [222, 4000]);
 
 // zip.js: CRC known value + archive structure a standard unzip can read (checked with python zipfile)
 assert.equal(z.crc32(new TextEncoder().encode('The quick brown fox jumps over the lazy dog')), 0x414fa339);

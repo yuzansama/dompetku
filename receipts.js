@@ -5,8 +5,13 @@ let dbp;
 const db = () => dbp ||= new Promise((resolve, reject) => {
   const req = indexedDB.open('dompetku', 1);
   req.onupgradeneeded = () => req.result.createObjectStore('receipts', { keyPath: 'id' }).createIndex('userId', 'userId');
-  req.onsuccess = () => resolve(req.result);
-  req.onerror = () => reject(req.error);
+  req.onsuccess = () => {
+    const d = req.result;
+    // WebKit can drop the connection after the app sits in the background: reopen on next use
+    d.onclose = d.onversionchange = () => { d.close(); dbp = null; };
+    resolve(d);
+  };
+  req.onerror = () => { dbp = null; reject(req.error); }; // retry next time instead of failing all session
 });
 const run = async (mode, fn) => {
   const d = await db();
@@ -28,19 +33,22 @@ export async function deleteUserReceipts(userId) {
   for (const r of await userReceipts(userId)) await deleteReceipt(r.id);
 }
 
-// drop photos no transaction points at (e.g. the app was closed between saving the photo and the transaction)
-export async function pruneOrphans(referenced) {
-  for (const id of await allReceiptIds()) if (!referenced.has(id)) await deleteReceipt(id);
+// drop photos no transaction points at (e.g. the app was closed between saving the photo and the transaction);
+// only ones created before `before`, so a save in flight right now is left alone
+export async function pruneOrphans(referenced, before = Date.now()) {
+  const all = await run('readonly', s => s.getAll());
+  for (const r of all) if (!referenced.has(r.id) && r.createdAt < before) await deleteReceipt(r.id);
 }
 
-// longest side 1600 px, JPEG 0.8. <img> applies EXIF orientation, so phone photos come out upright.
-export async function compress(file, max = 1600, quality = 0.8) {
+// at most ~1.9 MP (1600x1200 for a normal photo, more height for long receipts), JPEG 0.8.
+// <img> applies EXIF orientation, so phone photos come out upright.
+export async function compress(file, quality = 0.8) {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
     img.src = url;
     await img.decode();
-    const [w, h] = fitSize(img.naturalWidth, img.naturalHeight, max);
+    const [w, h] = fitSize(img.naturalWidth, img.naturalHeight);
     const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff';

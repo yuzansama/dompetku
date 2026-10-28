@@ -61,7 +61,8 @@ window.attach = async (i = 0) => { const c = document.createElement('canvas'); c
   x.fillText('TOKO UJI', 300, 800); x.fillText('TOTAL 45.000', 300, 2000);
   const blob = await new Promise(r => c.toBlob(r, 'image/png')); const dt = new DataTransfer();
   dt.items.add(new File([blob], 'struk.png', { type: 'image/png' })); const inp = document.querySelectorAll('[data-photo]')[i];
-  inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true })); return true; };
+  inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));
+  return until(() => !document.getElementById('receipt')?.classList.contains('busy') && document.querySelector('.thumb img')?.naturalWidth > 0); };
 window.labels = () => [...document.querySelectorAll('label.btn')].map(l => l.textContent.trim()).join('|');
 true`;
 
@@ -161,7 +162,24 @@ await step('MVP2 login', 'fill("email","rina@email.com"); fill("password","barub
 await step('Bukti: tombol Foto struk + Dari galeri', 'location.hash = "#/tambah"', 'labels() === "Foto struk|Dari galeri" || labels()');
 await step('Bukti: pilih foto -> pratinjau', 'attach(0)', 'until(() => $(".thumb img")?.complete && $(".thumb img").naturalWidth > 0)');
 await shot('12-tambah-foto');
-await step('Bukti: Ganti + Hapus muncul', '', 'labels() === "Ganti foto" && !!btn("Hapus foto")');
+await step('Bukti: Foto ulang + Dari galeri + Hapus muncul', '', '(labels() === "Foto ulang|Dari galeri" && !!btn("Hapus foto")) || labels()');
+await step('Bukti: gagal baca file baru tidak menghapus foto lama', `(() => { const dt = new DataTransfer();
+  dt.items.add(new File([new Uint8Array([1, 2, 3])], 'rusak.jpg', { type: 'image/jpeg' })); const inp = document.querySelectorAll('[data-photo]')[1];
+  inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true })); })()`,
+  'until(() => $("#toast").textContent.startsWith("Foto tidak bisa dibaca") && $(".thumb img")?.naturalWidth > 0 && !$("#receipt").classList.contains("busy"))');
+await step('Bukti: XSS lewat kategori di URL tidak jalan', 'location.hash = "#/riwayat?cat=%3Cimg%20src%3Dx%20onerror%3D%22window.__xss%3D1%22%3E"',
+  'until(() => !!$(".empty")).then(ok => ok && !window.__xss && !$(".empty img"))');
+await step('  ...balik ke form tambah (lewat Beranda)', 'location.hash = "#/beranda"; setTimeout(() => { location.hash = "#/tambah"; }, 150)', 'until(() => labels() === "Foto struk|Dari galeri")');
+await step('Bukti: tombol tutup viewer kena pointer sentuh', 'attach(0)', 'until(() => $(".thumb img")?.naturalWidth > 0)');
+await cdp('Runtime.evaluate', { expression: 'tap($(".thumb"))' }); await sleep(200);
+{ // a real touch tap on the close button, through the browser's input pipeline (not element.click())
+  const r = await js('JSON.stringify($("#viewer .close").getBoundingClientRect())'), b = JSON.parse(r);
+  const pt = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt] });
+  await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(400);
+}
+await step('  ...viewer tertutup', '', '$("#viewer").hidden && hash() === "#/tambah"');
 await step('Bukti: kembali tanpa simpan membuang foto', 'tap($("[aria-label=Kembali]"))', 'until(async () => hash() === "#/beranda" && await receiptCount() === 0)');
 await step('Bukti: simpan transaksi dengan foto galeri', 'location.hash = "#/tambah"; setTimeout(async () => { fill("amount","45000"); tap("Makan"); fill("note","Makan siang struk"); await attach(1); await until(() => $(".thumb img")); submit(); }, 150)',
   'until(async () => hash() === "#/beranda" && await receiptCount() === 1 && !!$(".tx .proof"), 6000)');
@@ -188,7 +206,43 @@ await step('Bantuan: info penyimpanan', 'location.hash = "#/tambah"; setTimeout(
 await shot('15-bantuan');
 await step('Bantuan: Ekspor ZIP', 'tap("Ekspor ZIP (CSV + foto struk)")', 'until(() => $("#toast").textContent.includes("dan 1 foto diekspor"))');
 await sleep(800);
-await step('Hapus akun ikut menghapus semua foto', 'tap("Hapus akun & semua data")', 'until(async () => hash() === "#/masuk" && await receiptCount() === 0)');
+
+// ---- regressions from the QA pass ----
+const touch = async (type, pts) => cdp('Input.dispatchTouchEvent', { type, touchPoints: pts });
+const center = async sel => { const b = JSON.parse(await js(`JSON.stringify($(${JSON.stringify(sel)}).getBoundingClientRect())`)); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+await step('Viewer: buka foto dari Riwayat', 'location.hash = "#/riwayat"; setTimeout(() => tap($(".tx .proof").closest(".tx")), 200)',
+  'until(() => $(".thumb img")?.naturalWidth > 0)');
+await js('tap($(".thumb")); true'); await sleep(300);
+{ // real touch input: double tap to zoom, then drag far to the bottom right
+  const c = { x: 195, y: 422 };
+  for (let i = 0; i < 2; i++) { await touch('touchStart', [c]); await touch('touchEnd', []); await sleep(60); }
+  await sleep(100);
+  await touch('touchStart', [c]);
+  for (let k = 1; k <= 10; k++) await touch('touchMove', [{ x: c.x + 150 * k, y: c.y + 100 * k }]);
+  await touch('touchEnd', []);
+  await sleep(200);
+}
+await step('Viewer: zoom lewat double tap', '', '/scale\\(2\\.5\\)/.test($("#viewer img").style.transform) || $("#viewer img").style.transform');
+await step('Viewer: geser dibatasi, foto tetap menutup layar', '',
+  '(() => { const r = $("#viewer img").getBoundingClientRect(); return r.left <= 0.5 && r.top <= 0.5 && r.right >= innerWidth - 0.5 || JSON.stringify(r); })()');
+await shot('16-viewer-pan-clamped');
+await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+await step('Viewer: Esc menutup', '', 'until(() => $("#viewer").hidden && hash().startsWith("#/ubah/"))');
+await step('Simpan dua kali dalam satu tap = 1 transaksi', `(() => { window.__n = JSON.parse(localStorage["dompetku.v1"]).txs.length;
+  location.hash = "#/tambah"; setTimeout(() => { fill("amount", "15000"); tap("Hiburan"); const f = $("form"); f.requestSubmit(); f.requestSubmit(); }, 200); })()`,
+  'until(() => !hash().startsWith("#/tambah")).then(() => new Promise(r => setTimeout(r, 300))).then(() => JSON.parse(localStorage["dompetku.v1"]).txs.length === window.__n + 1)');
+await step('Transaksi terhapus: Back tidak terjebak', `(() => { location.hash = "#/profil"; setTimeout(() => { window.__before = hash(); location.hash = "#/ubah/sudah-dihapus"; }, 200); })()`,
+  'until(() => window.__before && !hash().startsWith("#/ubah/")).then(() => new Promise(r => setTimeout(r, 200))).then(() => { history.back(); return until(() => hash() === window.__before) || hash(); })');
+await js(`(() => { const d = JSON.parse(localStorage["dompetku.v1"]); d.txs.find(t => !t.receiptId).receiptId = "foto-hilang"; localStorage["dompetku.v1"] = JSON.stringify(d); })()`);
+await step('receiptId tanpa foto dibersihkan saat buka', 'RELOAD',
+  'until(() => !JSON.parse(localStorage["dompetku.v1"]).txs.some(t => t.receiptId === "foto-hilang"))');
+await step('Foto yang masih ada tidak ikut terhapus', '', 'receiptCount().then(n => n === 1)');
+
+await step('Hapus akun ikut menghapus semua foto', 'location.hash = "#/bantuan"; setTimeout(() => tap("Hapus akun & semua data"), 200)', 'until(async () => hash() === "#/masuk" && await receiptCount() === 0)');
+await step('Bantuan tanpa foto: 0 foto · 0 KB', 'tap("Coba tanpa akun"); setTimeout(() => { location.hash = "#/bantuan"; }, 300)',
+  'until(() => /0 foto · 0 KB/.test($("#storage")?.textContent || ""))');
+await step('  ...hapus akun demo', 'tap("Hapus akun & semua data")', 'until(() => hash() === "#/masuk")');
 await step('Guarded route redirects to Masuk', 'location.hash="#/profil"', 'hash() === "#/masuk"');
 await step('Service worker registered', '', 'navigator.serviceWorker.getRegistration().then(r => !!r)');
 await step('Service worker controls page', 'RELOAD', '!!navigator.serviceWorker.controller');

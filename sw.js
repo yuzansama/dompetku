@@ -1,10 +1,14 @@
-// Offline: cache the app shell on install, serve cache-first, refresh the cache in the background.
+// Offline: cache the app shell on install, serve cache-first.
 const CACHE = 'dompetku-v3';
 const FILES = ['./', 'index.html', 'app.css', 'app.js', 'core.js', 'receipts.js', 'zip.js', 'inter-latin.woff2', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'icon-maskable-512.png', 'apple-touch-icon.png', 'manifest.webmanifest'];
 
+// cache: 'reload' / 'no-cache' skip the browser's HTTP cache (GitHub Pages sends max-age=600): without it a new
+// version could be cached with the previous app.js and the app would run mixed files.
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -13,13 +17,9 @@ self.addEventListener('activate', e => {
     .then(() => self.clients.claim()));
 });
 
+// Cache-first, no background refresh: each version's cache is filled once at install, so files of two versions
+// never mix. An update ships by changing this file (bump CACHE on every deploy; the browser re-installs on any byte change).
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => {
-    const net = fetch(e.request).then(res => {
-      if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
-      return res;
-    }).catch(() => hit);
-    return hit || net;
-  }));
+  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request)));
 });

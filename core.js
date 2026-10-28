@@ -50,12 +50,13 @@ export const receiptFileName = t =>
   `bukti/${t.date}_${t.category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}_${t.amount}_${String(t.receiptId).slice(0, 6)}.jpg`;
 
 export const formatBytes = n => n < 1024 * 1024
-  ? `${Math.max(1, Math.round(n / 1024)).toLocaleString('id-ID')} KB`
+  ? `${(n ? Math.max(1, Math.round(n / 1024)) : 0).toLocaleString('id-ID')} KB`
   : `${(n / 1024 / 1024).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB`;
 
-// shrink (never enlarge) so the longest side is at most `max`
-export const fitSize = (w, h, max) => {
-  const s = Math.min(1, max / Math.max(w, h));
+// Shrink (never enlarge) to at most `maxArea` pixels and `maxSide` on the longest side. A pixel budget rather than
+// a side limit keeps long receipts readable: 1080x8000 becomes 509x3771 instead of 216x1600.
+export const fitSize = (w, h, maxArea = 1600 * 1200, maxSide = 4000) => {
+  const s = Math.min(1, Math.sqrt(maxArea / (w * h)), maxSide / Math.max(w, h));
   return [Math.round(w * s), Math.round(h * s)];
 };
 
@@ -118,7 +119,12 @@ export function reminderDue(user, txs, now) {
   return !txs.some(t => t.date === today);
 }
 
-const csvCell = v => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+// Text starting with = + - @ (or tab/CR) is run as a formula by Excel/Sheets: prefix ' so it stays text.
+const csvCell = v => {
+  let s = String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 export const toCSV = txs => ['tanggal,jenis,kategori,nominal,catatan,bukti',
   ...sortTx(txs).map(t => [t.date, t.type === 'income' ? 'pemasukan' : 'pengeluaran', t.category, t.amount, t.note || '',
     t.receiptId ? receiptFileName(t) : '']
