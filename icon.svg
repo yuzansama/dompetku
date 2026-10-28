@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- card peeking out of the wallet -->
+  <rect x="150" y="118" width="196" height="120" rx="22" transform="rotate(-10 248 178)" fill="#A7F3D0"/>
+  <!-- wallet body -->
+  <rect x="104" y="180" width="304" height="220" rx="44" fill="#FFFFFF"/>
+  <!-- clasp -->
+  <path d="M408 246H330a44 44 0 0 0 0 88h78z" fill="#D1FAE5"/>
+  <circle cx="332" cy="290" r="17" fill="#0E9F6E"/>
+</svg>
