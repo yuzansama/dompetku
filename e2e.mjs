@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const OUT = process.argv[2] || '.';
-const URL = 'http://127.0.0.1:4173/';
+const URL = process.env.URL || 'http://127.0.0.1:4173/';
 const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', [
   '--headless=new', '--remote-debugging-port=9333', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'dk-'))}`,
   '--no-first-run', '--disable-gpu', 'about:blank'], { stdio: 'ignore' });
@@ -144,6 +144,11 @@ await step('Demo: wipe account', 'location.hash="#/bantuan"; setTimeout(() => ta
 await step('Rina account untouched by wipe', '', 'JSON.parse(localStorage["dompetku.v1"]).users.length === 1');
 await step('Guarded route redirects to Masuk', 'location.hash="#/profil"', 'hash() === "#/masuk"');
 await step('Service worker registered', '', 'navigator.serviceWorker.getRegistration().then(r => !!r)');
+await step('Service worker controls page', 'RELOAD', '!!navigator.serviceWorker.controller');
+await cdp('Network.enable');
+await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await step('Works offline after reload', 'RELOAD', 'hash() === "#/masuk" && !!btn("Masuk")');
+await shot('11-offline');
 
 console.log(`\n${pass} passed, ${fail} failed, ${errors.length} console errors`);
 errors.forEach(e => console.log('console:', e));
