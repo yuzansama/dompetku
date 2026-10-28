@@ -1,6 +1,6 @@
 // Offline: cache the app shell on install, serve cache-first, refresh the cache in the background.
-const CACHE = 'dompetku-v2';
-const FILES = ['./', 'index.html', 'app.css', 'app.js', 'core.js', 'icon.svg', 'icon-192.png', 'icon-512.png',
+const CACHE = 'dompetku-v3';
+const FILES = ['./', 'index.html', 'app.css', 'app.js', 'core.js', 'receipts.js', 'zip.js', 'inter-latin.woff2', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'icon-maskable-512.png', 'apple-touch-icon.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

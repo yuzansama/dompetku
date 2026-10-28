@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const OUT = process.argv[2] || '.';
 const URL = process.env.URL || 'http://127.0.0.1:4173/';
@@ -50,6 +50,19 @@ window.submit = () => document.querySelector('form').requestSubmit();
 window.hash = () => location.hash;
 window.errs = () => [...document.querySelectorAll('.err, .form-err')].map(e => e.textContent);
 window.confirm = () => true;
+window.until = (fn, ms = 4000) => new Promise(res => { const t0 = Date.now(); const tick = async () => {
+  let v; try { v = await fn(); } catch {} if (v) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(tick, 60); }; tick(); });
+window.idb = () => new Promise(r => { const q = indexedDB.open('dompetku'); q.onsuccess = () => { const d = q.result;
+  if (!d.objectStoreNames.contains('receipts')) return r([]); const g = d.transaction('receipts').objectStore('receipts').getAll(); g.onsuccess = () => r(g.result); }; });
+window.receiptCount = async () => (await idb()).length;
+// a 3000x4000 test image built in the page, handed to the file input like a camera shot
+window.attach = async (i = 0) => { const c = document.createElement('canvas'); c.width = 3000; c.height = 4000;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 3000, 4000); x.fillStyle = '#000'; x.font = '200px sans-serif';
+  x.fillText('TOKO UJI', 300, 800); x.fillText('TOTAL 45.000', 300, 2000);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png')); const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'struk.png', { type: 'image/png' })); const inp = document.querySelectorAll('[data-photo]')[i];
+  inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true })); return true; };
+window.labels = () => [...document.querySelectorAll('label.btn')].map(l => l.textContent.trim()).join('|');
 true`;
 
 let pass = 0, fail = 0;
@@ -142,6 +155,40 @@ await step('Demo: Riwayat has groups', 'tap("Riwayat")', 'document.querySelector
 await shot('10-riwayat-demo');
 await step('Demo: wipe account', 'location.hash="#/bantuan"; setTimeout(() => tap("Hapus akun & semua data"), 200)', 'new Promise(r => setTimeout(() => r(hash() === "#/masuk" && !JSON.parse(localStorage["dompetku.v1"]).users.some(u => u.email === "demo@dompetku.app")), 400))');
 await step('Rina account untouched by wipe', '', 'JSON.parse(localStorage["dompetku.v1"]).users.length === 1');
+// ---- MVP 2: bukti struk ----
+await cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: resolve(OUT) });
+await step('MVP2 login', 'fill("email","rina@email.com"); fill("password","barubaru2"); submit()', 'hash() === "#/beranda"');
+await step('Bukti: tombol Foto struk + Dari galeri', 'location.hash = "#/tambah"', 'labels() === "Foto struk|Dari galeri" || labels()');
+await step('Bukti: pilih foto -> pratinjau', 'attach(0)', 'until(() => $(".thumb img")?.complete && $(".thumb img").naturalWidth > 0)');
+await shot('12-tambah-foto');
+await step('Bukti: Ganti + Hapus muncul', '', 'labels() === "Ganti foto" && !!btn("Hapus foto")');
+await step('Bukti: kembali tanpa simpan membuang foto', 'tap($("[aria-label=Kembali]"))', 'until(async () => hash() === "#/beranda" && await receiptCount() === 0)');
+await step('Bukti: simpan transaksi dengan foto galeri', 'location.hash = "#/tambah"; setTimeout(async () => { fill("amount","45000"); tap("Makan"); fill("note","Makan siang struk"); await attach(1); await until(() => $(".thumb img")); submit(); }, 150)',
+  'until(async () => hash() === "#/beranda" && await receiptCount() === 1 && !!$(".tx .proof"), 6000)');
+await shot('13-beranda-bukti');
+await step('Bukti: dikompres ke sisi 1600 px, < 300 KB', '', 'idb().then(([r]) => r.width === 1200 && r.height === 1600 && r.size < 300000 && r.blob.type === "image/jpeg" || JSON.stringify([r.width, r.height, r.size]))');
+await step('Riwayat: chip Ada bukti', 'location.hash = "#/riwayat"; setTimeout(() => tap("Ada bukti"), 150)',
+  'until(() => hash().includes("bukti=ada") && document.querySelectorAll(".tx").length === 1 && document.querySelectorAll(".tx .proof").length === 1)');
+await step('Riwayat: chip Tanpa bukti', 'tap("Tanpa bukti")', 'until(() => hash().includes("bukti=tanpa") && document.querySelectorAll(".tx").length >= 1 && !$(".tx .proof"))');
+await step('Riwayat: chip Tanpa bukti lagi = lepas filter', 'tap("Tanpa bukti")', 'until(() => !hash().includes("bukti=") && document.querySelectorAll(".tx").length === 2)');
+await step('Ubah: foto tersimpan tampil', 'tap($(".tx .proof").closest(".tx"))', 'until(() => $(".thumb img")?.complete && $(".thumb img").naturalWidth > 0)');
+await step('Layar foto penuh terbuka', 'tap($(".thumb"))', '!$("#viewer").hidden && $("#viewer img").naturalWidth > 0');
+await shot('14-viewer');
+await step('Layar foto penuh: tombol tutup', '$("#viewer .close").click()', 'until(() => $("#viewer").hidden && hash().startsWith("#/ubah/"))');
+await step('Layar foto penuh: tombol back HP', 'tap($(".thumb")); setTimeout(() => history.back(), 150)', 'until(() => $("#viewer").hidden && hash().startsWith("#/ubah/"))');
+await step('Ganti foto: lama terhapus, tetap 1 foto', 'attach(0).then(() => until(() => $(".thumb img"))).then(() => submit())',
+  'until(async () => hash().startsWith("#/riwayat") && await receiptCount() === 1 && (await idb())[0].id === JSON.parse(localStorage["dompetku.v1"]).txs.find(t => t.receiptId).receiptId)');
+await step('Hapus foto lalu simpan', 'tap($(".tx .proof").closest(".tx")); setTimeout(async () => { await until(() => btn("Hapus foto")); tap("Hapus foto"); submit(); }, 200)',
+  'until(async () => hash().startsWith("#/riwayat") && await receiptCount() === 0 && !$(".tx .proof"))');
+await step('Hapus transaksi ikut menghapus fotonya', 'location.hash = "#/tambah"; setTimeout(async () => { fill("amount","20000"); tap("Transport"); await attach(0); await until(() => $(".thumb img")); submit(); }, 150)',
+  'until(async () => await receiptCount() === 1)');
+await step('  ...hapus', 'tap($(".tx .proof").closest(".tx")); setTimeout(() => tap("Hapus transaksi"), 200)', 'until(async () => await receiptCount() === 0)');
+await step('Bantuan: info penyimpanan', 'location.hash = "#/tambah"; setTimeout(async () => { fill("amount","45000"); tap("Belanja"); await attach(0); await until(() => $(".thumb img")); submit(); await until(() => !hash().startsWith("#/tambah")); location.hash = "#/bantuan"; }, 150)',
+  'until(() => /1 foto · [0-9]+ KB/.test($("#storage")?.textContent || ""), 8000)');
+await shot('15-bantuan');
+await step('Bantuan: Ekspor ZIP', 'tap("Ekspor ZIP (CSV + foto struk)")', 'until(() => $("#toast").textContent.includes("dan 1 foto diekspor"))');
+await sleep(800);
+await step('Hapus akun ikut menghapus semua foto', 'tap("Hapus akun & semua data")', 'until(async () => hash() === "#/masuk" && await receiptCount() === 0)');
 await step('Guarded route redirects to Masuk', 'location.hash="#/profil"', 'hash() === "#/masuk"');
 await step('Service worker registered', '', 'navigator.serviceWorker.getRegistration().then(r => !!r)');
 await step('Service worker controls page', 'RELOAD', '!!navigator.serviceWorker.controller');

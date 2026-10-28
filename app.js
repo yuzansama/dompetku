@@ -1,4 +1,6 @@
 import * as C from './core.js';
+import * as R from './receipts.js';
+import { zip } from './zip.js';
 
 // ---------- storage ----------
 const KEY = 'dompetku.v1';
@@ -27,6 +29,9 @@ const ICONS = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 17h.01"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   x: '<path d="M7 7l10 10M17 7L7 17"/>',
+  receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  image: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 16l-5-5-8 8"/>',
 };
 const I = name => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -47,7 +52,8 @@ const tabbar = active => `<nav class="tabbar" aria-label="Menu utama">${[['beran
 function txRow(t) {
   const cls = t.type === 'income' ? 'in' : 'out';
   return `<li><button class="tx" data-go="ubah/${t.id}"><span class="dot ${cls}">${t.category[0]}</span>` +
-    `<span class="meta"><b>${esc(t.note || t.category)}</b><small>${t.note ? t.category + ' · ' : ''}${C.shortDate(t.date)}</small></span>` +
+    `<span class="meta"><b>${esc(t.note || t.category)}</b><small>${t.receiptId ? `<span class="proof" title="Ada bukti struk">${I('receipt')}</span>` : ''}` +
+    `${t.note ? t.category + ' · ' : ''}${C.shortDate(t.date)}</small></span>` +
     `<span class="amt ${cls}">${t.type === 'income' ? '+' : '-'}${C.rupiah(t.amount)}</span></button></li>`;
 }
 
@@ -140,22 +146,27 @@ const views = {
   },
 
   riwayat: q => {
-    const ym = q.get('ym') || thisMonth(), cat = q.get('cat') || '', type = q.get('type') || '';
+    const ym = q.get('ym') || thisMonth(), cat = q.get('cat') || '', type = q.get('type') || '', bukti = q.get('bukti') || '';
     const txs = myTx(), tot = C.monthTotals(txs, ym);
-    const groups = C.groupByDate(C.filterTx(txs, { ym, category: cat, type }));
+    const groups = C.groupByDate(C.filterTx(txs, { ym, category: cat, type, proof: bukti }));
     const cats = [...new Set([...C.CATEGORIES.expense, ...C.CATEGORIES.income])];
+    const keep = { ym, cat, type, bukti };
     return `<section class="screen"><h1>Riwayat</h1>
-      <div class="card month"><button class="icon-btn" data-go="${qs('riwayat', { ym: C.shiftMonth(ym, -1), cat, type })}" aria-label="Bulan sebelumnya">${I('back')}</button>
+      <div class="card month"><button class="icon-btn" data-go="${qs('riwayat', { ...keep, ym: C.shiftMonth(ym, -1) })}" aria-label="Bulan sebelumnya">${I('back')}</button>
         <b>${C.monthLabel(ym)}</b>
-        <button class="icon-btn" data-go="${qs('riwayat', { ym: C.shiftMonth(ym, 1), cat, type })}" aria-label="Bulan berikutnya">${I('right')}</button></div>
+        <button class="icon-btn" data-go="${qs('riwayat', { ...keep, ym: C.shiftMonth(ym, 1) })}" aria-label="Bulan berikutnya">${I('right')}</button></div>
       <div class="totals"><span class="muted">Masuk <b class="in">${C.rupiah(tot.income)}</b></span><span class="muted">Keluar <b class="out">${C.rupiah(tot.expense)}</b></span></div>
-      ${type ? `<button class="pill" data-go="${qs('riwayat', { ym, cat })}">Hanya ${type === 'income' ? 'pemasukan' : 'pengeluaran'} ${I('x')}</button>` : ''}
+      ${type ? `<button class="pill" data-go="${qs('riwayat', { ...keep, type: '' })}">Hanya ${type === 'income' ? 'pemasukan' : 'pengeluaran'} ${I('x')}</button>` : ''}
       <div class="chips scroll" role="group" aria-label="Filter kategori">
-        <button class="chip" aria-pressed="${!cat}" data-go="${qs('riwayat', { ym, type })}">Semua</button>
-        ${cats.map(c => `<button class="chip" aria-pressed="${c === cat}" data-go="${qs('riwayat', { ym, type, cat: c })}">${c}</button>`).join('')}
+        <button class="chip" aria-pressed="${!cat}" data-go="${qs('riwayat', { ...keep, cat: '' })}">Semua</button>
+        ${cats.map(c => `<button class="chip" aria-pressed="${c === cat}" data-go="${qs('riwayat', { ...keep, cat: c })}">${c}</button>`).join('')}
+      </div>
+      <div class="chips proof-filter" role="group" aria-label="Filter bukti">
+        ${[['ada', 'Ada bukti'], ['tanpa', 'Tanpa bukti']].map(([v, label]) =>
+          `<button class="chip" aria-pressed="${bukti === v}" data-go="${qs('riwayat', { ...keep, bukti: bukti === v ? '' : v })}">${label}</button>`).join('')}
       </div>
       ${groups.length ? groups.map(([date, list]) => `<div class="group-date">${C.longDate(date)}</div><ul class="card tx-list">${list.map(txRow).join('')}</ul>`).join('')
-        : `<div class="card empty" style="margin-top:16px">Tidak ada transaksi${cat ? ` kategori ${cat}` : ''} di ${C.monthLabel(ym)}.<button class="btn" data-go="tambah">Tambah transaksi</button></div>`}
+        : `<div class="card empty" style="margin-top:16px">Tidak ada transaksi${cat ? ` kategori ${cat}` : ''}${bukti ? (bukti === 'ada' ? ' dengan bukti' : ' tanpa bukti') : ''} di ${C.monthLabel(ym)}.<button class="btn" data-go="tambah">Tambah transaksi</button></div>`}
     </section>${tabbar('riwayat')}`;
   },
 
@@ -237,13 +248,40 @@ const views = {
     </div>
     <h2 style="margin-bottom:10px">Data</h2>
     <ul class="card menu" style="border:1px solid var(--border)">
-      <li><button data-act="export">${I('download')}<span class="grow">Ekspor CSV</span></button></li>
+      <li><div class="info" id="storage">${I('image')}<span class="grow">Menghitung penyimpanan…</span></div></li>
+      <li><button data-act="exportzip">${I('download')}<span class="grow">Ekspor ZIP (CSV + foto struk)</span></button></li>
+      <li><button data-act="export">${I('download')}<span class="grow">Ekspor CSV saja</span></button></li>
       <li><button data-act="wipe" class="out">${I('trash')}<span class="grow">Hapus akun &amp; semua data</span></button></li>
     </ul></section>`,
 };
 
+// Photo being edited in the open transaction form. Nothing touches IndexedDB until Simpan.
+// { url, blob?, width?, height? }: blob set = new photo; no blob = the saved one; null = no photo
+let photo = null, photoChanged = false, photoToken = 0;
+function setPhoto(p) {
+  if (photo?.url && photo.url !== p?.url) URL.revokeObjectURL(photo.url);
+  photo = p;
+  const box = document.getElementById('receipt');
+  if (box) box.innerHTML = receiptBlock();
+}
+const fileInput = capture => `<input type="file" accept="image/*" ${capture ? 'capture="environment"' : ''} data-photo hidden>`;
+function receiptBlock() {
+  if (photo?.loading) return '<p class="muted">Memuat foto…</p>';
+  if (photo?.url) return `<button type="button" class="thumb" data-act="viewphoto" aria-label="Lihat foto struk"><img src="${photo.url}" alt="Foto struk"></button>
+    <div class="photo-actions"><label class="btn outline small">Ganti foto${fileInput(true)}</label>
+    <button type="button" class="btn danger small" data-act="removephoto">Hapus foto</button></div>`;
+  return `<div class="photo-actions"><label class="btn outline small">${I('camera')}Foto struk${fileInput(true)}</label>
+    <label class="btn outline small">${I('image')}Dari galeri${fileInput(false)}</label></div>`;
+}
+
 function txForm(t) {
   const type = t?.type || 'expense';
+  photoChanged = false;
+  setPhoto(t?.receiptId ? { loading: true } : null);
+  const token = ++photoToken; // a slow read must not land in a form opened later
+  if (t?.receiptId) R.getReceipt(t.receiptId)
+    .then(rec => token === photoToken && setPhoto(rec ? { url: URL.createObjectURL(rec.blob) } : null))
+    .catch(() => token === photoToken && setPhoto(null));
   return `<section class="screen form">${topbar(t ? 'Ubah transaksi' : 'Tambah transaksi', lastMain)}
     <form data-form="tx" novalidate>
       <input type="hidden" name="id" value="${t?.id || ''}"><input type="hidden" name="type" value="${type}">
@@ -256,12 +294,56 @@ function txForm(t) {
       <div class="field"><span>Kategori</span><input type="hidden" name="category" value="${t?.category || ''}"><div class="chips" id="cats">${catChips(type, t?.category)}</div></div>
       ${field('Tanggal', 'date', t?.date || C.isoDate(new Date()), 'type="date" required')}
       <label class="field"><span>Catatan (opsional)</span><textarea name="note" maxlength="100" placeholder="Contoh: makan siang bareng tim">${esc(t?.note || '')}</textarea></label>
+      <div class="field"><span>Bukti struk (opsional)</span><div id="receipt">${receiptBlock()}</div></div>
       <div class="actions"><button class="btn">Simpan</button>
         ${t ? `<button type="button" class="btn danger" data-act="delete" data-id="${t.id}">Hapus transaksi</button>` : ''}</div>
     </form></section>`;
 }
 const catChips = (type, selected) => C.CATEGORIES[type]
   .map(c => `<button type="button" class="chip" data-act="setcat" data-cat="${c}" aria-pressed="${c === selected}">${c}</button>`).join('');
+
+function download(blob, name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---------- full-screen photo viewer with pinch zoom ----------
+// Own pinch handling (touch-action: none) so the browser never zooms the page itself:
+// a zoomed page is exactly what made the tab bar disappear before.
+const viewer = document.getElementById('viewer'), viewerImg = viewer.querySelector('img');
+let zoom = { s: 1, x: 0, y: 0 }, pointers = new Map(), gesture = null;
+const applyZoom = () => { viewerImg.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`; };
+function openViewer(url) {
+  viewerImg.src = url;
+  zoom = { s: 1, x: 0, y: 0 }; applyZoom();
+  viewer.hidden = false;
+  history.pushState({ viewer: true }, ''); // the phone's back button closes the viewer, not the form
+}
+const closeViewer = () => { if (!viewer.hidden) history.back(); };
+window.addEventListener('popstate', () => { viewer.hidden = true; });
+viewer.querySelector('.close').addEventListener('click', closeViewer);
+viewer.addEventListener('pointerdown', e => {
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  viewer.setPointerCapture(e.pointerId);
+  const p = [...pointers.values()];
+  gesture = p.length === 2
+    ? { dist: Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]), s: zoom.s }
+    : { x: e.clientX - zoom.x, y: e.clientY - zoom.y };
+});
+viewer.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId) || !gesture) return;
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  const p = [...pointers.values()];
+  if (p.length === 2 && gesture.dist) zoom.s = Math.min(5, Math.max(1, gesture.s * Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]) / gesture.dist));
+  else if (p.length === 1 && zoom.s > 1 && 'x' in gesture) { zoom.x = e.clientX - gesture.x; zoom.y = e.clientY - gesture.y; }
+  if (zoom.s === 1) zoom.x = zoom.y = 0;
+  applyZoom();
+});
+const endPointer = e => { pointers.delete(e.pointerId); gesture = null; };
+viewer.addEventListener('pointerup', endPointer);
+viewer.addEventListener('pointercancel', endPointer);
+viewer.addEventListener('dblclick', () => { zoom = zoom.s > 1 ? { s: 1, x: 0, y: 0 } : { s: 2.5, x: 0, y: 0 }; applyZoom(); });
 
 // ---------- forms ----------
 const values = form => Object.fromEntries(new FormData(form));
@@ -294,14 +376,40 @@ const forms = {
     u.hash = C.hashPassword(v.password, u.salt);
     if (save()) { toast('Password diganti. Silakan masuk.'); go('masuk'); }
   },
-  tx(form) {
+  async tx(form) {
     const v = values(form);
     const tx = { type: v.type, amount: C.parseAmount(v.amount), category: v.category, date: v.date, note: v.note.trim() };
     if (!showErrors(form, C.validateTx(tx))) return;
+    const submit = form.querySelector('button:not([type])');
+    submit.disabled = true;
     const old = db.txs.find(t => t.id === v.id && t.userId === db.session);
-    if (old) Object.assign(old, tx);
-    else db.txs.push({ ...tx, id: randomId(), userId: db.session, createdAt: Date.now() });
-    if (save()) { toast(old ? 'Transaksi diperbarui' : 'Transaksi disimpan'); go(lastMain); }
+    const rec = old || { id: randomId(), userId: db.session, createdAt: Date.now() };
+    Object.assign(rec, tx);
+    const prevReceipt = rec.receiptId || '';
+    let msg = old ? 'Transaksi diperbarui' : 'Transaksi disimpan';
+    if (photoChanged) {
+      rec.receiptId = '';
+      if (photo?.blob) {
+        // photo first, transaction second: a crash in between leaves an orphan photo (pruned at start), never a dangling id
+        const id = randomId();
+        try {
+          await R.putReceipt({ id, userId: db.session, txId: rec.id, blob: photo.blob, width: photo.width,
+            height: photo.height, size: photo.blob.size, createdAt: Date.now() });
+          rec.receiptId = id;
+          navigator.storage?.persist?.().catch(() => {});
+        } catch {
+          rec.receiptId = prevReceipt;
+          msg = 'Transaksi tersimpan, tapi foto gagal disimpan';
+        }
+      }
+    }
+    if (!old) db.txs.push(rec);
+    submit.disabled = false;
+    if (!save()) return;
+    if (prevReceipt && prevReceipt !== rec.receiptId) R.deleteReceipt(prevReceipt).catch(() => {});
+    photoChanged = false;
+    toast(msg);
+    go(lastMain);
   },
   profile(form) {
     const v = values(form), u = me();
@@ -360,30 +468,54 @@ const actions = {
   },
   delete(btn) {
     if (!confirm('Hapus transaksi ini?')) return;
-    db.txs = db.txs.filter(t => !(t.id === btn.dataset.id && t.userId === db.session));
-    if (save()) { toast('Transaksi dihapus'); go(lastMain); }
+    const t = myTx().find(x => x.id === btn.dataset.id);
+    db.txs = db.txs.filter(x => x !== t);
+    if (!save()) return;
+    if (t?.receiptId) R.deleteReceipt(t.receiptId).catch(() => {});
+    toast('Transaksi dihapus');
+    go(lastMain);
+  },
+  viewphoto() { if (photo?.url) openViewer(photo.url); },
+  removephoto() {
+    if (!confirm('Hapus foto struk ini?')) return;
+    photoChanged = true;
+    setPhoto(null);
+  },
+  async exportzip(btn) {
+    btn.disabled = true;
+    try {
+      const txs = myTx(), enc = new TextEncoder();
+      const files = [{ name: 'dompetku.csv', data: enc.encode('﻿' + C.toCSV(txs)) }];
+      for (const t of txs.filter(x => x.receiptId)) {
+        const rec = await R.getReceipt(t.receiptId);
+        if (rec) files.push({ name: C.receiptFileName(t), data: new Uint8Array(await rec.blob.arrayBuffer()) });
+      }
+      download(new Blob([zip(files)], { type: 'application/zip' }), `dompetku-${C.isoDate(new Date())}.zip`);
+      toast(`${txs.length} transaksi dan ${files.length - 1} foto diekspor`);
+    } catch {
+      toast('Ekspor ZIP gagal');
+    } finally {
+      btn.disabled = false;
+    }
   },
   cleartarget() {
     me().target = 0;
     if (save()) { toast('Target dihapus'); go('profil'); }
   },
   export() {
-    const csv = '﻿' + C.toCSV(myTx());
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })),
-      download: `dompetku-${C.isoDate(new Date())}.csv`,
-    });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    download(new Blob(['﻿' + C.toCSV(myTx())], { type: 'text/csv;charset=utf-8' }), `dompetku-${C.isoDate(new Date())}.csv`);
     toast(`${myTx().length} transaksi diekspor`);
   },
-  wipe() {
-    if (!confirm('Hapus akun ini beserta semua transaksinya dari perangkat? Tindakan ini tidak bisa dibatalkan.')) return;
+  async wipe() {
+    if (!confirm('Hapus akun ini beserta semua transaksi dan foto struknya dari perangkat? Tindakan ini tidak bisa dibatalkan.')) return;
     const id = db.session;
     db.txs = db.txs.filter(t => t.userId !== id);
     db.users = db.users.filter(u => u.id !== id);
     db.session = null;
-    if (save()) { toast('Akun dan data dihapus'); go('masuk'); }
+    if (!save()) return;
+    await R.deleteUserReceipts(id).catch(() => {});
+    toast('Akun dan data dihapus');
+    go('masuk');
   },
   logout() {
     db.session = null;
@@ -409,6 +541,22 @@ function render() {
   document.getElementById('app').innerHTML = views[path](new URLSearchParams(query), id);
   if (raw !== lastPath) window.scrollTo(0, 0);
   lastPath = raw;
+  if (path === 'bantuan') showStorage();
+}
+
+const LOW_SPACE = 50 * 1024 * 1024;
+async function showStorage() {
+  const el = document.getElementById('storage');
+  try {
+    const recs = await R.userReceipts(db.session);
+    const bytes = recs.reduce((s, r) => s + r.size, 0);
+    const est = await navigator.storage?.estimate?.();
+    const low = est?.quota && est.quota - est.usage < LOW_SPACE;
+    el.innerHTML = `${I('image')}<span class="grow">Penyimpanan foto<small>${recs.length} foto · ${C.formatBytes(bytes)}</small>` +
+      `${low ? '<small class="out">Ruang hampir penuh. Ekspor ZIP lalu hapus foto lama.</small>' : ''}</span>`;
+  } catch {
+    el.innerHTML = `${I('image')}<span class="grow">Penyimpanan foto tidak bisa dibaca</span>`;
+  }
 }
 
 const app = document.getElementById('app');
@@ -422,7 +570,21 @@ app.addEventListener('submit', e => { e.preventDefault(); forms[e.target.dataset
 app.addEventListener('input', e => {
   if (e.target.name === 'amount') e.target.value = C.groupDigits(C.parseAmount(e.target.value));
 });
-app.addEventListener('change', e => {
+app.addEventListener('change', async e => {
+  if (e.target.matches('[data-photo]')) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhoto({ loading: true });
+    try {
+      const c = await R.compress(file);
+      photoChanged = true;
+      setPhoto({ url: URL.createObjectURL(c.blob), ...c });
+    } catch {
+      setPhoto(null);
+      toast('Foto tidak bisa dibaca. Coba foto lain.');
+    }
+    return;
+  }
   if (e.target.name !== 'theme') return;
   me().theme = e.target.value;
   document.documentElement.dataset.theme = e.target.value;
@@ -430,5 +592,6 @@ app.addEventListener('change', e => {
 });
 window.addEventListener('hashchange', render);
 render();
+R.pruneOrphans(new Set(db.txs.map(t => t.receiptId).filter(Boolean))).catch(() => {});
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

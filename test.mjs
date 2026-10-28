@@ -1,6 +1,7 @@
 // Self-check for core.js: node test.mjs
 import assert from 'node:assert/strict';
 import * as c from './core.js';
+import * as z from './zip.js';
 
 assert.equal(c.sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 assert.equal(c.sha256Hex(''), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
@@ -56,7 +57,27 @@ assert.equal(c.reminderDue(user, [{ date: '2026-10-28' }], new Date(2026, 9, 28,
 assert.equal(c.reminderDue({ reminder: false }, [], new Date(2026, 9, 28, 21, 0)), false);
 
 assert.equal(c.toCSV([{ ...tx, note: 'makan, "enak"' }]),
-  'tanggal,jenis,kategori,nominal,catatan\n2026-10-28,pengeluaran,Makan,45000,"makan, ""enak"""');
+  'tanggal,jenis,kategori,nominal,catatan,bukti\n2026-10-28,pengeluaran,Makan,45000,"makan, ""enak""",');
+const withProof = { ...tx, receiptId: 'a1b2c3d4e5', createdAt: 1 };
+assert.equal(c.receiptFileName(withProof), 'bukti/2026-10-28_makan_45000_a1b2c3.jpg');
+assert.ok(c.toCSV([withProof]).endsWith(',bukti/2026-10-28_makan_45000_a1b2c3.jpg'));
+assert.deepEqual(c.filterTx([withProof, { ...tx, createdAt: 2 }], { proof: 'ada' }).length, 1);
+assert.deepEqual(c.filterTx([withProof, { ...tx, createdAt: 2 }], { proof: 'tanpa' })[0].createdAt, 2);
+assert.equal(c.formatBytes(300), '1 KB');
+assert.equal(c.formatBytes(250 * 1024), '250 KB');
+assert.equal(c.formatBytes(4.3 * 1024 * 1024), '4,3 MB');
+assert.deepEqual(c.fitSize(4000, 3000, 1600), [1600, 1200]);
+assert.deepEqual(c.fitSize(800, 600, 1600), [800, 600]);
+assert.deepEqual(c.fitSize(1000, 3000, 1600), [533, 1600]);
+
+// zip.js: CRC known value + archive structure a standard unzip can read (checked with python zipfile)
+assert.equal(z.crc32(new TextEncoder().encode('The quick brown fox jumps over the lazy dog')), 0x414fa339);
+const archive = z.zip([{ name: 'a.csv', data: new TextEncoder().encode('x,y') }, { name: 'bukti/b.jpg', data: new Uint8Array([1, 2, 3]) }]);
+const view = new DataView(archive.buffer);
+assert.equal(view.getUint32(0, true), 0x04034b50);
+assert.equal(view.getUint32(archive.length - 22, true), 0x06054b50);
+assert.equal(view.getUint16(archive.length - 22 + 10, true), 2);
+assert.equal(archive.length, (30 + 5 + 3) + (30 + 11 + 3) + (46 + 5) + (46 + 11) + 22);
 assert.equal(c.escapeHtml('<b>"x"</b>'), '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
 
 const demo = c.demoTransactions('u1', new Date(2026, 9, 28));

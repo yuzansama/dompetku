@@ -40,8 +40,24 @@ export const monthTotals = (txs, ym) => {
 // newest first: by date, then by creation time
 export const sortTx = txs => [...txs].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
 
-export const filterTx = (txs, { ym, category, type } = {}) => txs.filter(t =>
-  (!ym || t.date.startsWith(ym)) && (!category || t.category === category) && (!type || t.type === type));
+// proof: 'ada' = has a receipt photo, 'tanpa' = has none
+export const filterTx = (txs, { ym, category, type, proof } = {}) => txs.filter(t =>
+  (!ym || t.date.startsWith(ym)) && (!category || t.category === category) && (!type || t.type === type) &&
+  (!proof || (proof === 'ada') === !!t.receiptId));
+
+// file name of a receipt photo inside the export ZIP, e.g. bukti/2026-10-28_makan_45000_a1b2c3.jpg
+export const receiptFileName = t =>
+  `bukti/${t.date}_${t.category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}_${t.amount}_${String(t.receiptId).slice(0, 6)}.jpg`;
+
+export const formatBytes = n => n < 1024 * 1024
+  ? `${Math.max(1, Math.round(n / 1024)).toLocaleString('id-ID')} KB`
+  : `${(n / 1024 / 1024).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB`;
+
+// shrink (never enlarge) so the longest side is at most `max`
+export const fitSize = (w, h, max) => {
+  const s = Math.min(1, max / Math.max(w, h));
+  return [Math.round(w * s), Math.round(h * s)];
+};
 
 // [[date, [tx...]], ...] newest date first
 export const groupByDate = txs => {
@@ -103,8 +119,9 @@ export function reminderDue(user, txs, now) {
 }
 
 const csvCell = v => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-export const toCSV = txs => ['tanggal,jenis,kategori,nominal,catatan',
-  ...sortTx(txs).map(t => [t.date, t.type === 'income' ? 'pemasukan' : 'pengeluaran', t.category, t.amount, t.note || '']
+export const toCSV = txs => ['tanggal,jenis,kategori,nominal,catatan,bukti',
+  ...sortTx(txs).map(t => [t.date, t.type === 'income' ? 'pemasukan' : 'pengeluaran', t.category, t.amount, t.note || '',
+    t.receiptId ? receiptFileName(t) : '']
     .map(csvCell).join(','))].join('\n');
 
 export const escapeHtml = s => String(s).replace(/[&<>"']/g, c =>
