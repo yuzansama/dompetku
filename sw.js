@@ -1,5 +1,5 @@
 // Offline: cache the app shell on install, serve cache-first.
-const CACHE = 'dompetku-43765e0c9d';
+const CACHE = 'dompetku-6c62e98faf';
 const FILES = ['./', 'index.html', 'app.css', 'app.js', 'core.js', 'receipts.js', 'zip.js', 'inter-latin.woff2', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'icon-maskable-512.png', 'apple-touch-icon.png', 'manifest.webmanifest'];
 

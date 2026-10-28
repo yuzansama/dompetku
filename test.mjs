@@ -74,7 +74,8 @@ assert.deepEqual(c.fitSize(4000, 3000), [1600, 1200]);
 assert.deepEqual(c.fitSize(3000, 4000), [1200, 1600]);
 assert.deepEqual(c.fitSize(800, 600), [800, 600]);
 assert.deepEqual(c.fitSize(1080, 8000), [509, 3771]);
-assert.deepEqual(c.fitSize(500, 9000), [222, 4000]);
+assert.deepEqual(c.fitSize(1080, 20000), [322, 5963]);
+assert.deepEqual(c.fitSize(300, 30000), [80, 8000]);
 
 // zip.js: CRC known value + archive structure a standard unzip can read (checked with python zipfile)
 assert.equal(z.crc32(new TextEncoder().encode('The quick brown fox jumps over the lazy dog')), 0x414fa339);

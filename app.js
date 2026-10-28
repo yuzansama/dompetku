@@ -339,12 +339,14 @@ function openViewer(url) {
   viewerImg.src = url;
   zoom = { s: 1, x: 0, y: 0 }; applyZoom();
   viewer.hidden = false;
+  app.inert = true; // keyboard and screen readers stay inside the viewer
   closeBtn.focus();
   history.pushState({ viewer: true }, ''); // the phone's back button closes the viewer, not the form
 }
 function hideViewer() {
   if (viewer.hidden) return false;
   viewer.hidden = true;
+  app.inert = false;
   viewerOpener?.focus?.();
   return true;
 }
@@ -461,7 +463,7 @@ const forms = {
     if (prevReceipt && prevReceipt !== rec.receiptId) R.deleteReceipt(prevReceipt).catch(() => {});
     photoChanged = false;
     toast(msg);
-    go(lastMain);
+    leaveForm();
   },
   profile(form) {
     const v = values(form), u = me();
@@ -525,7 +527,7 @@ const actions = {
     if (!save()) return;
     if (t?.receiptId) R.deleteReceipt(t.receiptId).catch(() => {});
     toast('Transaksi dihapus');
-    go(lastMain);
+    leaveForm();
   },
   viewphoto() { if (photo?.url) openViewer(photo.url); },
   removephoto() {
@@ -581,10 +583,13 @@ const actions = {
 // ---------- router ----------
 const PUBLIC = new Set(['masuk', 'daftar', 'lupa', 'sk']);
 const MAIN = new Set(['beranda', 'riwayat']);
-let lastMain = 'beranda', lastPath = '';
+let lastMain = 'beranda', lastPath = '', lastFull = '', formFromMain = false;
 const go = path => { location.hash = '#/' + path; };
 // redirects replace the current entry, so Back never lands on a page that bounces forward again
 const redirect = path => { location.replace('#/' + path); };
+// After Simpan/Hapus: step back to the list the form came from instead of pushing it again, so the deleted or
+// saved form is not left in history as a dead Back press.
+const leaveForm = () => (formFromMain ? history.back() : go(lastMain));
 
 function render() {
   const [raw, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
@@ -593,8 +598,11 @@ function render() {
   if (!views[path]) return redirect(user ? 'beranda' : 'masuk');
   if (!PUBLIC.has(path) && !user) return redirect('masuk');
   if (user && (path === 'masuk' || path === 'daftar')) return redirect('beranda');
-  if (MAIN.has(path)) lastMain = raw + (query ? '?' + query : '');
-  if (path !== 'tambah' && path !== 'ubah' && photo) { photoToken++; setPhoto(null); } // leaving the form frees its photo
+  const full = raw + (query ? '?' + query : ''), isForm = path === 'tambah' || path === 'ubah';
+  if (isForm && full !== lastFull) formFromMain = lastFull === lastMain;
+  if (MAIN.has(path)) lastMain = full;
+  lastFull = full;
+  if (!isForm && photo) { photoToken++; setPhoto(null); } // leaving the form frees its photo
   document.documentElement.dataset.theme = user?.theme || 'system';
   document.getElementById('app').innerHTML = views[path](new URLSearchParams(query), id);
   if (raw !== lastPath) window.scrollTo(0, 0);

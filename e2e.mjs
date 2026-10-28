@@ -234,6 +234,11 @@ await step('Simpan dua kali dalam satu tap = 1 transaksi', `(() => { window.__n 
   'until(() => !hash().startsWith("#/tambah")).then(() => new Promise(r => setTimeout(r, 300))).then(() => JSON.parse(localStorage["dompetku.v1"]).txs.length === window.__n + 1)');
 await step('Transaksi terhapus: Back tidak terjebak', `(() => { location.hash = "#/profil"; setTimeout(() => { window.__before = hash(); location.hash = "#/ubah/sudah-dihapus"; }, 200); })()`,
   'until(() => window.__before && !hash().startsWith("#/ubah/")).then(() => new Promise(r => setTimeout(r, 200))).then(() => { history.back(); return until(() => hash() === window.__before) || hash(); })');
+await step('Hapus dari Riwayat lalu Back sekali = halaman sebelum Riwayat', `(async () => {
+  location.hash = "#/profil"; await until(() => $(".profile-head")); location.hash = "#/riwayat"; await until(() => $(".tx"));
+  tap($(".tx:not(:has(.proof))")); await until(() => btn("Hapus transaksi")); tap("Hapus transaksi");
+  await until(() => hash() === "#/riwayat" && $(".month")); await new Promise(r => setTimeout(r, 200)); history.back(); })()`,
+  'until(() => hash() === "#/profil") || hash()');
 await js(`(() => { const d = JSON.parse(localStorage["dompetku.v1"]); d.txs.find(t => !t.receiptId).receiptId = "foto-hilang"; localStorage["dompetku.v1"] = JSON.stringify(d); })()`);
 await step('receiptId tanpa foto dibersihkan saat buka', 'RELOAD',
   'until(() => !JSON.parse(localStorage["dompetku.v1"]).txs.some(t => t.receiptId === "foto-hilang"))');

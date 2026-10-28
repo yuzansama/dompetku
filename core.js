@@ -54,8 +54,8 @@ export const formatBytes = n => n < 1024 * 1024
   : `${(n / 1024 / 1024).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB`;
 
 // Shrink (never enlarge) to at most `maxArea` pixels and `maxSide` on the longest side. A pixel budget rather than
-// a side limit keeps long receipts readable: 1080x8000 becomes 509x3771 instead of 216x1600.
-export const fitSize = (w, h, maxArea = 1600 * 1200, maxSide = 4000) => {
+// a side limit keeps long receipts readable: 1080x8000 becomes 509x3771 instead of 216x1600, 1080x20000 322x5963.
+export const fitSize = (w, h, maxArea = 1600 * 1200, maxSide = 8000) => {
   const s = Math.min(1, Math.sqrt(maxArea / (w * h)), maxSide / Math.max(w, h));
   return [Math.round(w * s), Math.round(h * s)];
 };
