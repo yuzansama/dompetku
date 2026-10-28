@@ -1,5 +1,5 @@
 // Offline: cache the app shell on install, serve cache-first.
-const CACHE = 'dompetku-v3';
+const CACHE = 'dompetku-43765e0c9d';
 const FILES = ['./', 'index.html', 'app.css', 'app.js', 'core.js', 'receipts.js', 'zip.js', 'inter-latin.woff2', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'icon-maskable-512.png', 'apple-touch-icon.png', 'manifest.webmanifest'];
 
@@ -18,7 +18,7 @@ self.addEventListener('activate', e => {
 });
 
 // Cache-first, no background refresh: each version's cache is filled once at install, so files of two versions
-// never mix. An update ships by changing this file (bump CACHE on every deploy; the browser re-installs on any byte change).
+// never mix. An update ships by changing this file: `node stamp.mjs` sets CACHE to a hash of FILES (test.mjs checks it).
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request)));

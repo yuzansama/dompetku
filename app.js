@@ -1,6 +1,6 @@
 import * as C from './core.js';
 import * as R from './receipts.js';
-import { zipParts } from './zip.js';
+import { zipParts, crc32 } from './zip.js';
 
 // ---------- storage ----------
 const KEY = 'dompetku.v1';
@@ -451,7 +451,12 @@ const forms = {
     }
     if (!old) db.txs.push(rec);
     form.inert = false;
-    if (!save()) return;
+    if (!save()) { // storage full: undo in memory and drop the photo just written, so a retry starts clean
+      if (rec.receiptId !== prevReceipt) R.deleteReceipt(rec.receiptId).catch(() => {});
+      rec.receiptId = prevReceipt;
+      if (!old) db.txs.pop();
+      return;
+    }
     form.dataset.saved = '1'; // the form stays in the DOM until the hashchange re-render
     if (prevReceipt && prevReceipt !== rec.receiptId) R.deleteReceipt(prevReceipt).catch(() => {});
     photoChanged = false;
@@ -535,7 +540,10 @@ const actions = {
       const files = [{ name: 'dompetku.csv', data: enc.encode('﻿' + C.toCSV(txs)) }];
       for (const t of txs.filter(x => x.receiptId)) {
         const rec = await R.getReceipt(t.receiptId);
-        if (rec) files.push({ name: C.receiptFileName(t), data: new Uint8Array(await rec.blob.arrayBuffer()) });
+        if (!rec) continue;
+        // read once for the CRC, then let the bytes go: the archive references the stored Blob itself
+        const bytes = new Uint8Array(await rec.blob.arrayBuffer());
+        files.push({ name: C.receiptFileName(t), blob: rec.blob, crc: crc32(bytes), size: bytes.length });
       }
       download(new Blob(zipParts(files), { type: 'application/zip' }), `dompetku-${C.isoDate(new Date())}.zip`);
       toast(`${txs.length} transaksi dan ${files.length - 1} foto diekspor`);
@@ -655,8 +663,12 @@ if (loadedFromStorage) (async () => {
   const startedAt = Date.now(), atStart = new Map(db.txs.map(t => [t, t.receiptId]));
   const ids = new Set(await R.allReceiptIds());
   const dangling = db.txs.filter(t => t.receiptId && t.receiptId === atStart.get(t) && !ids.has(t.receiptId));
-  if (dangling.length) { dangling.forEach(t => { t.receiptId = ''; }); if (save()) render(); }
-  await R.pruneOrphans(new Set(db.txs.map(t => t.receiptId).filter(Boolean)), startedAt);
+  if (dangling.length) {
+    dangling.forEach(t => { t.receiptId = ''; });
+    // re-render to drop the proof icons, but never under an open form: it would wipe what is being typed
+    if (save() && !/^#\/(tambah|ubah\/)/.test(location.hash)) render();
+  }
+  await R.pruneOrphans(new Set(db.txs.map(t => t.receiptId).filter(Boolean)), new Set(db.users.map(u => u.id)), startedAt);
 })().catch(() => {});
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as c from './core.js';
 import * as z from './zip.js';
+import { expectedCache } from './stamp.mjs';
 
 assert.equal(c.sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 assert.equal(c.sha256Hex(''), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
@@ -89,5 +90,9 @@ const demo = c.demoTransactions('u1', new Date(2026, 9, 28));
 assert.equal(demo.length, 10);
 assert.deepEqual(c.validateTx(demo[0]), {});
 assert.equal(demo[0].date, '2026-10-28');
+
+// sw.js cache name must match the current app files, or installed users never get this version
+const { sw, cache } = expectedCache();
+assert.ok(sw.includes(`const CACHE = '${cache}';`), 'sw.js CACHE is stale: run node stamp.mjs');
 
 console.log('core.js: all checks passed');

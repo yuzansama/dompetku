@@ -20,7 +20,7 @@ const run = async (mode, fn) => {
     const req = fn(store);
     tx.oncomplete = () => resolve(req?.result);
     tx.onerror = tx.onabort = () => reject(tx.error);
-  });
+  }).catch(e => { dbp = null; throw e; }); // a lost connection (WebKit after backgrounding) reopens on the next call
 };
 
 export const putReceipt = rec => run('readwrite', s => s.put(rec));
@@ -33,11 +33,13 @@ export async function deleteUserReceipts(userId) {
   for (const r of await userReceipts(userId)) await deleteReceipt(r.id);
 }
 
-// drop photos no transaction points at (e.g. the app was closed between saving the photo and the transaction);
-// only ones created before `before`, so a save in flight right now is left alone
-export async function pruneOrphans(referenced, before = Date.now()) {
+// Drop photos no transaction points at (e.g. the app was closed between saving the photo and the transaction).
+// Only photos of accounts that still exist (an account's photos go with "Hapus akun"; any others mean the account
+// list was lost, and then the photos are the only copy left), and only ones created before `before`, so a save in
+// flight right now is left alone.
+export async function pruneOrphans(referenced, userIds, before = Date.now()) {
   const all = await run('readonly', s => s.getAll());
-  for (const r of all) if (!referenced.has(r.id) && r.createdAt < before) await deleteReceipt(r.id);
+  for (const r of all) if (!referenced.has(r.id) && userIds.has(r.userId) && r.createdAt < before) await deleteReceipt(r.id);
 }
 
 // at most ~1.9 MP (1600x1200 for a normal photo, more height for long receipts), JPEG 0.8.

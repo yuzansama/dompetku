@@ -243,6 +243,18 @@ await step('Hapus akun ikut menghapus semua foto', 'location.hash = "#/bantuan";
 await step('Bantuan tanpa foto: 0 foto · 0 KB', 'tap("Coba tanpa akun"); setTimeout(() => { location.hash = "#/bantuan"; }, 300)',
   'until(() => /0 foto · 0 KB/.test($("#storage")?.textContent || ""))');
 await step('  ...hapus akun demo', 'tap("Hapus akun & semua data")', 'until(() => hash() === "#/masuk")');
+await step('Penyimpanan rusak: siapkan akun dengan 1 foto', `(async () => { tap("Daftar"); await until(() => $("[name=password2]"));
+  fill("name","Sari"); fill("email","sari@contoh.id"); fill("password","rahasia123"); fill("password2","rahasia123");
+  $("[name=agree]").checked = true; submit(); await until(() => hash() === "#/beranda"); location.hash = "#/tambah";
+  await until(() => labels() === "Foto struk|Dari galeri"); fill("amount","30000"); tap("Makan"); await attach(0); submit(); })()`,
+  'until(async () => hash() === "#/beranda" && await receiptCount() === 1, 8000)');
+await js('localStorage["dompetku.v1"] = "{rusak"; true');
+await step('  ...buka ulang dengan data rusak: foto tidak dihapus', 'RELOAD', 'until(() => hash() === "#/masuk").then(async ok => ok && await receiptCount() === 1)');
+await step('  ...daftar akun baru lalu buka ulang: foto lama tetap ada', `(async () => { tap("Daftar"); await until(() => $("[name=password2]"));
+  fill("name","Sari Baru"); fill("email","sari2@contoh.id"); fill("password","rahasia123"); fill("password2","rahasia123");
+  $("[name=agree]").checked = true; submit(); })()`, 'until(() => hash() === "#/beranda")');
+await step('  ...setelah reload', 'RELOAD', 'until(() => hash() === "#/beranda").then(() => new Promise(r => setTimeout(r, 800))).then(async () => await receiptCount() === 1)');
+await step('  ...keluar', 'location.hash = "#/profil"; setTimeout(() => tap("Keluar"), 200)', 'until(() => hash() === "#/masuk")');
 await step('Guarded route redirects to Masuk', 'location.hash="#/profil"', 'hash() === "#/masuk"');
 await step('Service worker registered', '', 'navigator.serviceWorker.getRegistration().then(r => !!r)');
 await step('Service worker controls page', 'RELOAD', '!!navigator.serviceWorker.controller');

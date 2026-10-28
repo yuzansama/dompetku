@@ -28,8 +28,8 @@ export function zipParts(files, now = new Date()) {
   const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
   const parts = [], central = [];
   let offset = 0;
-  for (const f of files) {
-    const name = enc.encode(f.name), crc = crc32(f.data), size = f.data.length;
+  for (const f of files) { // { name, data: Uint8Array } or { name, blob, crc, size } (bytes already let go)
+    const name = enc.encode(f.name), crc = f.crc ?? crc32(f.data), size = f.size ?? f.data.length;
     const head = (sig, extra) => {
       const b = new DataView(new ArrayBuffer(extra));
       b.setUint32(0, sig, true);
@@ -45,7 +45,7 @@ export function zipParts(files, now = new Date()) {
     cen.setUint16(12, time, true); cen.setUint16(14, date, true);
     cen.setUint32(16, crc, true); cen.setUint32(20, size, true); cen.setUint32(24, size, true);
     cen.setUint16(28, name.length, true); cen.setUint32(42, offset, true);
-    parts.push(new Uint8Array(local.buffer), name, f.data);
+    parts.push(new Uint8Array(local.buffer), name, f.blob || f.data);
     central.push(new Uint8Array(cen.buffer), name);
     offset += 30 + name.length + size;
   }
