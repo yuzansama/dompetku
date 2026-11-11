@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "walt-trading": {
+      "type": "http",
+      "url": "https://walletbot.me/bot-relay/public-api/mcp"
+    }
+  }
+}
